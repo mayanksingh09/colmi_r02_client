@@ -117,8 +117,12 @@ class Client:
 
         logger.info(f"Received packet {packet}")
 
+        if len(packet) == 0:
+            logger.warning("Received empty packet")
+            return
+
         # Big Data packets have variable length and start with magic number 188
-        if len(packet) > 0 and packet[0] == sleep.BIG_DATA_MAGIC:
+        if packet[0] == sleep.BIG_DATA_MAGIC:
             packet_type = packet[1]
             if packet_type in COMMAND_HANDLERS:
                 result = COMMAND_HANDLERS[packet_type](packet)
@@ -129,10 +133,11 @@ class Client:
             else:
                 logger.warning(f"Did not expect this Big Data packet: {packet}")
         else:
-            # Regular 16-byte packets
-            assert len(packet) == 16, f"Regular packet is the wrong length {packet}"
+            # Regular packets - don't enforce length check
             packet_type = packet[0]
-            assert packet_type < 127, f"Packet has error bit set {packet}"
+            if packet_type >= 127:
+                logger.warning(f"Packet has error bit set {packet}")
+                return
 
             if packet_type in COMMAND_HANDLERS:
                 result = COMMAND_HANDLERS[packet_type](packet)
