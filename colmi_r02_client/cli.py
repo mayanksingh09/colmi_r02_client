@@ -14,7 +14,7 @@ import asyncclick as click
 from bleak import BleakScanner
 
 from colmi_r02_client.client import Client
-from colmi_r02_client import steps, pretty_print, db, date_utils, hr, real_time
+from colmi_r02_client import steps, pretty_print, db, date_utils, hr, real_time, sleep
 
 logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
 
@@ -279,6 +279,43 @@ async def sync(client: Client, db_path: Path | None, start: datetime | None, end
             await client.set_time(when)
 
     click.echo("Done")
+
+
+@cli_client.command()
+@click.pass_obj
+@click.option("--as-csv", is_flag=True, help="Print as CSV", default=False)
+async def get_sleep(client: Client, as_csv: bool = False) -> None:
+    """Get sleep tracking data"""
+    async with client:
+        result = await client.get_sleep_data()
+        
+        if not result.sleep_days:
+            click.echo("No sleep data available")
+            return
+
+        if not as_csv:
+            for day in result.sleep_days:
+                click.echo(f"\nSleep data from {day.days_ago} days ago:")
+                click.echo(f"  Sleep start: {timedelta(minutes=day.sleep_start)}")
+                click.echo(f"  Sleep end: {timedelta(minutes=day.sleep_end)}")
+                click.echo("  Sleep periods:")
+                for period in day.sleep_periods:
+                    click.echo(f"    {period.type.name}: {period.minutes} minutes")
+        else:
+            out = StringIO()
+            writer = csv.writer(out)
+            writer.writerow(["Days Ago", "Sleep Start", "Sleep End", "Period Type", "Period Minutes"])
+            
+            for day in result.sleep_days:
+                for period in day.sleep_periods:
+                    writer.writerow([
+                        day.days_ago,
+                        timedelta(minutes=day.sleep_start),
+                        timedelta(minutes=day.sleep_end),
+                        period.type.name,
+                        period.minutes
+                    ])
+            click.echo(out.getvalue())
 
 
 DEVICE_NAME_PREFIXES = [

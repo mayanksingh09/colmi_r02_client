@@ -10,7 +10,7 @@ from typing import Any
 from bleak import BleakClient
 from bleak.backends.characteristic import BleakGATTCharacteristic
 
-from colmi_r02_client import battery, date_utils, steps, set_time, blink_twice, hr, hr_settings, packet, reboot, real_time
+from colmi_r02_client import battery, date_utils, steps, set_time, blink_twice, hr, hr_settings, packet, reboot, real_time, sleep
 
 UART_SERVICE_UUID = "6E40FFF0-B5A3-F393-E0A9-E50E24DCCA9E"
 UART_RX_CHAR_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -38,6 +38,7 @@ class FullData:
     address: str
     heart_rates: list[hr.HeartRateLog | hr.NoData]
     sport_details: list[list[steps.SportDetail] | steps.NoData]
+    sleep_data: sleep.SleepData | None = None
 
 
 COMMAND_HANDLERS: dict[int, Callable[[bytearray], Any]] = {
@@ -48,6 +49,7 @@ COMMAND_HANDLERS: dict[int, Callable[[bytearray], Any]] = {
     hr.CMD_READ_HEART_RATE: hr.HeartRateLogParser().parse,
     set_time.CMD_SET_TIME: empty_parse,
     hr_settings.CMD_HEART_RATE_LOG_SETTINGS: hr_settings.parse_heart_rate_log_settings,
+    sleep.SLEEP_DATA_ID: sleep.SleepDataParser().parse,
 }
 """
 TODO put these somewhere nice
@@ -66,6 +68,10 @@ class Client:
         self.bleak_client = BleakClient(self.address)
         self.queues: dict[int, asyncio.Queue] = {cmd: asyncio.Queue() for cmd in COMMAND_HANDLERS}
         self.record_to = record_to
+        
+        # Add Big Data service and characteristics
+        self.big_data_service = None
+        self.big_data_write_char = None
 
     async def __aenter__(self) -> "Client":
         logger.info(f"Connecting to {self.address}")
@@ -93,7 +99,15 @@ class Client:
         assert rx_char
         self.rx_char = rx_char
 
+        # Initialize Big Data service and characteristics
+        big_data_service = self.bleak_client.services.get_service(sleep.BIG_DATA_SERVICE_UUID)
+        assert big_data_service
+        big_data_write_char = big_data_service.get_characteristic(sleep.BIG_DATA_WRITE_CHAR_UUID)
+        assert big_data_write_char
+        self.big_data_write_char = big_data_write_char
+
         await self.bleak_client.start_notify(UART_TX_CHAR_UUID, self._handle_tx)
+        await self.bleak_client.start_notify(sleep.BIG_DATA_NOTIFY_CHAR_UUID, self._handle_tx)
 
     async def disconnect(self):
         await self.bleak_client.disconnect()
@@ -246,6 +260,18 @@ class Client:
 
         return results
 
+    async def get_sleep_data(self) -> sleep.SleepData:
+        """Fetch sleep data from the device"""
+        await self.bleak_client.write_gatt_char(
+            self.big_data_write_char,
+            sleep.create_sleep_request(),
+            response=False
+        )
+        return await asyncio.wait_for(
+            self.queues[sleep.SLEEP_DATA_ID].get(),
+            timeout=5,  # Longer timeout since sleep data might be larger
+        )
+
     async def get_full_data(self, start: datetime, end: datetime) -> FullData:
         """
         Fetches all data from the ring between start and end. Useful for syncing.
@@ -256,4 +282,16 @@ class Client:
             heart_rate_logs.append(await self.get_heart_rate_log(d))
             sport_detail_logs.append(await self.get_steps(d))
 
-        return FullData(self.address, heart_rates=heart_rate_logs, sport_details=sport_detail_logs)
+        # Add sleep data to full data sync
+        try:
+            sleep_data = await self.get_sleep_data()
+        except Exception as e:
+            logger.warning(f"Failed to get sleep data: {e}")
+            sleep_data = None
+
+        return FullData(
+            self.address,
+            heart_rates=heart_rate_logs,
+            sport_details=sport_detail_logs,
+            sleep_data=sleep_data
+        )
