@@ -117,18 +117,31 @@ class Client:
 
         logger.info(f"Received packet {packet}")
 
-        assert len(packet) == 16, f"Packet is the wrong length {packet}"
-        packet_type = packet[0]
-        assert packet_type < 127, f"Packet has error bit set {packet}"
-
-        if packet_type in COMMAND_HANDLERS:
-            result = COMMAND_HANDLERS[packet_type](packet)
-            if result is not None:
-                self.queues[packet_type].put_nowait(result)
+        # Big Data packets have variable length and start with magic number 188
+        if len(packet) > 0 and packet[0] == sleep.BIG_DATA_MAGIC:
+            packet_type = packet[1]
+            if packet_type in COMMAND_HANDLERS:
+                result = COMMAND_HANDLERS[packet_type](packet)
+                if result is not None:
+                    self.queues[packet_type].put_nowait(result)
+                else:
+                    logger.debug(f"No result returned from parser for {packet_type}")
             else:
-                logger.debug(f"No result returned from parser for {packet_type}")
+                logger.warning(f"Did not expect this Big Data packet: {packet}")
         else:
-            logger.warning(f"Did not expect this packet: {packet}")
+            # Regular 16-byte packets
+            assert len(packet) == 16, f"Regular packet is the wrong length {packet}"
+            packet_type = packet[0]
+            assert packet_type < 127, f"Packet has error bit set {packet}"
+
+            if packet_type in COMMAND_HANDLERS:
+                result = COMMAND_HANDLERS[packet_type](packet)
+                if result is not None:
+                    self.queues[packet_type].put_nowait(result)
+                else:
+                    logger.debug(f"No result returned from parser for {packet_type}")
+            else:
+                logger.warning(f"Did not expect this packet: {packet}")
 
         if self.record_to is not None:
             with self.record_to.open("ab") as f:
