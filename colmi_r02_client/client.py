@@ -115,7 +115,7 @@ class Client:
     def _handle_tx(self, _: BleakGATTCharacteristic, packet: bytearray) -> None:
         """Bleak callback that handles new packets from the ring."""
 
-        logger.info(f"Received packet {packet}")
+        logger.info(f"Received packet {packet} (length: {len(packet)}, hex: {packet.hex()})")
 
         if len(packet) == 0:
             logger.warning("Received empty packet")
@@ -131,7 +131,7 @@ class Client:
                 else:
                     logger.debug(f"No result returned from parser for {packet_type}")
             else:
-                logger.warning(f"Did not expect this Big Data packet: {packet}")
+                logger.warning(f"Did not expect this Big Data packet: {packet} (type: {packet_type})")
         else:
             # Regular packets - don't enforce length check
             packet_type = packet[0]
@@ -146,7 +146,7 @@ class Client:
                 else:
                     logger.debug(f"No result returned from parser for {packet_type}")
             else:
-                logger.warning(f"Did not expect this packet: {packet}")
+                logger.warning(f"Did not expect this packet: {packet} (type: {packet_type}, hex: {packet.hex()})")
 
         if self.record_to is not None:
             with self.record_to.open("ab") as f:
